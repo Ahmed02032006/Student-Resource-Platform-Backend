@@ -4,7 +4,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-import { connectToDb } from './Config/connectToDb.js';
+import { connectToDb, isDbConnected } from './Config/connectToDb.js';
 import authRoutes from './Routes/authRoutes.js';
 import courseRoutes from './Routes/courseRoutes.js';
 import enrollmentRoutes from './Routes/enrollmentRoutes.js';
@@ -25,14 +25,17 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// ── Health check ───────────────────────────────────────────────────────────────
-app.get('/api/health', (_req, res) =>
+// ── Health check with DB status ───────────────────────────────────────────────
+app.get('/api/health', async (_req, res) => {
+  const dbStatus = isDbConnected() ? 'connected' : 'disconnected';
   res.status(200).json({
     status: 'success',
     message: 'Course Resource Hub API — Phase 3',
     timestamp: new Date().toISOString(),
-  })
-);
+    database: dbStatus,
+    environment: process.env.NODE_ENV || 'development',
+  });
+});
 
 // ── API Routes ─────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
@@ -44,9 +47,11 @@ app.use('/api/assessments', assessmentRoutes);
 
 // Health check route
 app.get("/", (req, res) => {
-  res.json(
-    { message: `Server is running! || On This Url ${process.env.FRONTEND_URL}` }
-  );
+  res.json({
+    message: `Server is running! || On This Url ${process.env.FRONTEND_URL}`,
+    status: 'online',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // ── 404 handler ────────────────────────────────────────────────────────────────
@@ -55,9 +60,17 @@ app.use((_req, res) =>
 );
 
 // ── Global error handler ───────────────────────────────────────────────────────
-// eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   console.error('[Error]', err);
+
+  // MongoDB connection errors
+  if (err.name === 'MongoNetworkError' || err.name === 'MongoTimeoutError') {
+    return res.status(503).json({
+      status: 'error',
+      code: 'DATABASE_UNAVAILABLE',
+      message: 'Database service temporarily unavailable. Please try again in a moment.',
+    });
+  }
 
   // Mongoose cast / validation errors → 400
   if (err.name === 'CastError') {
@@ -73,20 +86,29 @@ app.use((err, _req, res, _next) => {
     return res.status(409).json({ status: 'error', code: 'DUPLICATE_KEY', message: `An account with this ${fieldName} already exists.` });
   }
 
+  // JWT errors
+  if (err.name === 'JsonWebTokenError') {
+    return res.status(401).json({ status: 'error', code: 'INVALID_TOKEN', message: 'Invalid authentication token.' });
+  }
+  if (err.name === 'TokenExpiredError') {
+    return res.status(401).json({ status: 'error', code: 'TOKEN_EXPIRED', message: 'Your session has expired. Please log in again.' });
+  }
 
   return res.status(err.status || 500).json({
     status: 'error',
-    code: 'INTERNAL_ERROR',
-    message: process.env.NODE_ENV === 'production' ? 'Something went wrong.' : err.message,
+    code: err.code || 'INTERNAL_ERROR',
+    message: process.env.NODE_ENV === 'production' ? 'Something went wrong. Please try again later.' : err.message,
   });
 });
 
-// ── Start ──────────────────────────────────────────────────────────────────────
-connectToDb();
-
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-  console.log(`ENV: ${process.env.NODE_ENV || 'development'}`);
-});
+// ── Start only if not in Vercel serverless environment ──────────────────────
+// For Vercel, we export the app directly
+if (process.env.NODE_ENV !== 'production') {
+  connectToDb();
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+    console.log(`ENV: ${process.env.NODE_ENV || 'development'}`);
+  });
+}
 
 export default app;
