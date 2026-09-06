@@ -3,9 +3,9 @@ import bcrypt from 'bcryptjs';
 
 const rejectionInfoSchema = new mongoose.Schema(
   {
-    reason:      { type: String, default: null },
-    canReapply:  { type: Boolean, default: false },
-    rejectedAt:  { type: Date, default: null },
+    reason: { type: String, default: null },
+    canReapply: { type: Boolean, default: false },
+    rejectedAt: { type: Date, default: null },
   },
   { _id: false }
 );
@@ -13,30 +13,30 @@ const rejectionInfoSchema = new mongoose.Schema(
 const userSchema = new mongoose.Schema(
   {
     uniqueUserId: {
-      type:     String,
+      type: String,
       required: true,
-      unique:   true,
-      trim:     true,
+      unique: true,
+      trim: true,
     },
     name: {
-      type:     String,
+      type: String,
       required: true,
-      trim:     true,
+      trim: true,
     },
     email: {
-      type:      String,
-      required:  true,
-      unique:    true,
+      type: String,
+      required: true,
+      unique: true,
       lowercase: true,
-      trim:      true,
+      trim: true,
     },
     passwordHash: {
-      type:     String,
+      type: String,
       required: true,
     },
     role: {
-      type:    String,
-      enum:    ['user', 'admin', 'cr'],
+      type: String,
+      enum: ['user', 'admin', 'cr'],
       default: 'user',
     },
     semester: {
@@ -44,12 +44,12 @@ const userSchema = new mongoose.Schema(
       trim: true,
     },
     accountStatus: {
-      type:    String,
-      enum:    ['pending', 'approved', 'rejected'],
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
       default: 'pending',
     },
     rejectionInfo: {
-      type:    rejectionInfoSchema,
+      type: rejectionInfoSchema,
       default: () => ({}),
     },
   },
@@ -62,7 +62,7 @@ userSchema.pre('save', async function (next) {
   if (!this.isModified('passwordHash')) return next();
 
   try {
-    const salt       = await bcrypt.genSalt(12);
+    const salt = await bcrypt.genSalt(12);
     this.passwordHash = await bcrypt.hash(this.passwordHash, salt);
     next();
   } catch (err) {
@@ -73,6 +73,17 @@ userSchema.pre('save', async function (next) {
 // ── Instance method: compare a plain-text password with the stored hash ────────
 userSchema.methods.comparePassword = async function (plainPassword) {
   return bcrypt.compare(plainPassword, this.passwordHash);
+};
+
+userSchema.methods.comparePassword = async function (plainPassword) {
+  try {
+    const isMatch = await bcrypt.compare(plainPassword, this.passwordHash);
+    console.log('🔐 Password compare result:', isMatch);
+    return isMatch;
+  } catch (err) {
+    console.error('❌ Password compare error:', err);
+    throw err;
+  }
 };
 
 const User = mongoose.model('User', userSchema);
