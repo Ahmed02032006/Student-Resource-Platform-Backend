@@ -1,7 +1,6 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
-import mongoose from 'mongoose';
 
 dotenv.config();
 
@@ -16,17 +15,27 @@ import assessmentRoutes from './Routes/assessmentRoutes.js';
 const app = express();
 const PORT = process.env.PORT || 5000;
 
+// ── Logging middleware (add this before routes) ─────────────────────────────
+app.use((req, res, next) => {
+  console.log(`📨 ${req.method} ${req.path}`);
+  console.log('📦 Body:', req.body);
+  console.log('🔑 Headers:', req.headers);
+  next();
+});
+
 // ── CORS ───────────────────────────────────────────────────────────────────────
 app.use(cors({
   origin: process.env.FRONTEND_URL || 'http://localhost:5173',
   credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
 }));
 
 // ── Body parsing ───────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// ── Health check with DB status ───────────────────────────────────────────────
+// ── Health check ───────────────────────────────────────────────────────────────
 app.get('/api/health', async (_req, res) => {
   const dbStatus = isDbConnected() ? 'connected' : 'disconnected';
   res.status(200).json({
@@ -61,21 +70,10 @@ app.use((_req, res) =>
   res.status(404).json({ status: 'error', code: 'NOT_FOUND', message: 'Endpoint not found.' })
 );
 
-mongoose.connection.on('error', (err) => {
-  console.error('MongoDB connection error:', err);
-});
-
-mongoose.connection.on('connected', () => {
-  console.log('MongoDB connected successfully');
-});
-
-mongoose.connection.on('disconnected', () => {
-  console.log('MongoDB disconnected');
-});
-
 // ── Global error handler ───────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
-  console.error('[Error]', err);
+  console.error('❌ [Global Error]', err);
+  console.error('❌ [Global Error] Stack:', err.stack);
 
   // MongoDB connection errors
   if (err.name === 'MongoNetworkError' || err.name === 'MongoTimeoutError') {
@@ -109,32 +107,30 @@ app.use((err, _req, res, _next) => {
   }
 
   // Log the full error for debugging
-  console.error('Unhandled error:', err.stack || err);
+  console.error('❌ Unhandled error:', err.stack || err);
 
   return res.status(err.status || 500).json({
     status: 'error',
     code: err.code || 'INTERNAL_ERROR',
     message: process.env.NODE_ENV === 'production' ? 'Something went wrong. Please try again later.' : err.message,
+    // Include debug info in development
+    ...(process.env.NODE_ENV !== 'production' && {
+      debug: {
+        error: err.message,
+        stack: err.stack,
+        name: err.name
+      }
+    })
   });
 });
 
-// ── Start the server ─────────────────────────────────────────────────────────
-const startServer = async () => {
-  try {
-    await connectToDb();
-    app.listen(PORT, () => {
-      console.log(`✅ Server running on http://localhost:${PORT}`);
-      console.log(`📦 ENV: ${process.env.NODE_ENV || 'development'}`);
-    });
-  } catch (error) {
-    console.error('❌ Failed to start server:', error);
-    process.exit(1);
-  }
-};
-
-// Only start if not in Vercel serverless environment
+// ── Start only if not in Vercel serverless environment ──────────────────────
 if (process.env.NODE_ENV !== 'production') {
-  startServer();
+  connectToDb();
+  app.listen(PORT, () => {
+    console.log(`✅ Server running on http://localhost:${PORT}`);
+    console.log(`📦 ENV: ${process.env.NODE_ENV || 'development'}`);
+  });
 }
 
 export default app;
