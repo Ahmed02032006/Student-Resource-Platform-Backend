@@ -1,6 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import dotenv from 'dotenv';
+import mongoose from 'mongoose';
 
 dotenv.config();
 
@@ -48,9 +49,10 @@ app.use('/api/assessments', assessmentRoutes);
 // Health check route
 app.get("/", (req, res) => {
   res.json({
-    message: `Server is running! || On This Url ${process.env.FRONTEND_URL}`,
+    message: `Server is running!`,
     status: 'online',
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
+    database: isDbConnected() ? 'connected' : 'disconnected'
   });
 });
 
@@ -58,6 +60,18 @@ app.get("/", (req, res) => {
 app.use((_req, res) =>
   res.status(404).json({ status: 'error', code: 'NOT_FOUND', message: 'Endpoint not found.' })
 );
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB connection error:', err);
+});
+
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB connected successfully');
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB disconnected');
+});
 
 // ── Global error handler ───────────────────────────────────────────────────────
 app.use((err, _req, res, _next) => {
@@ -94,6 +108,9 @@ app.use((err, _req, res, _next) => {
     return res.status(401).json({ status: 'error', code: 'TOKEN_EXPIRED', message: 'Your session has expired. Please log in again.' });
   }
 
+  // Log the full error for debugging
+  console.error('Unhandled error:', err.stack || err);
+
   return res.status(err.status || 500).json({
     status: 'error',
     code: err.code || 'INTERNAL_ERROR',
@@ -101,14 +118,23 @@ app.use((err, _req, res, _next) => {
   });
 });
 
-// ── Start only if not in Vercel serverless environment ──────────────────────
-// For Vercel, we export the app directly
+// ── Start the server ─────────────────────────────────────────────────────────
+const startServer = async () => {
+  try {
+    await connectToDb();
+    app.listen(PORT, () => {
+      console.log(`✅ Server running on http://localhost:${PORT}`);
+      console.log(`📦 ENV: ${process.env.NODE_ENV || 'development'}`);
+    });
+  } catch (error) {
+    console.error('❌ Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+// Only start if not in Vercel serverless environment
 if (process.env.NODE_ENV !== 'production') {
-  connectToDb();
-  app.listen(PORT, () => {
-    console.log(`Server running on http://localhost:${PORT}`);
-    console.log(`ENV: ${process.env.NODE_ENV || 'development'}`);
-  });
+  startServer();
 }
 
 export default app;
