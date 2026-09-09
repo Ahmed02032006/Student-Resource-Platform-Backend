@@ -15,9 +15,5 @@ router.use(authenticate);
 
 // Chat endpoints
 router.post('/chat', chatWithAI);
-router.post('/chat/stream', streamChatWithAI);
-
-// Get available models
-router.get('/models', getAvailableModels);
 
 export default router;
