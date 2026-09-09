@@ -5,8 +5,8 @@ class AIService {
   constructor() {
     this.baseURL = process.env.AI_BASE_URL || 'https://tokenin.my.id/v1';
     this.apiKey = process.env.AI_API_KEY;
-    this.model = process.env.AI_MODEL || 'gpt-3.5-turbo'; // Changed to a more reliable model
-    this.timeout = 15000; // 15 seconds timeout
+    this.model = 'myt/gemini-3.5-flash-free'; // Updated default
+    this.timeout = 20000; // 20 seconds timeout for Gemini
     
     console.log('🤖 AI Service initialized');
     console.log('📡 Base URL:', this.baseURL);
@@ -42,29 +42,35 @@ class AIService {
    */
   async chatCompletion(messages, options = {}) {
     try {
-      // Check if API key exists
-      if (!this.apiKey || this.apiKey === 'sk-f507f08a0...........................................') {
-        console.warn('⚠️ AI_API_KEY not properly configured. Using fallback response.');
+      if (!this.apiKey || this.apiKey.length < 10) {
+        console.warn('⚠️ AI_API_KEY not properly configured.');
         return this.getFallbackResponse(messages);
       }
 
       const { temperature = 0.5, max_tokens = 200, stream = false } = options;
 
-      // Limit message length to prevent timeout
+      // For Gemini models, use lower values for faster response
+      const isGemini = this.model.includes('gemini');
+      const adjustedTemperature = isGemini ? Math.min(temperature, 0.3) : temperature;
+      const adjustedMaxTokens = isGemini ? Math.min(max_tokens, 150) : max_tokens;
+
+      // Truncate messages if too long
       const truncatedMessages = messages.map(msg => ({
         ...msg,
-        content: msg.content?.length > 300 ? msg.content.substring(0, 300) + '...' : msg.content
+        content: msg.content?.length > 500 ? msg.content.substring(0, 500) + '...' : msg.content
       }));
 
       const requestBody = {
         model: this.model,
         messages: truncatedMessages,
-        temperature: Math.min(temperature, 0.5),
-        max_tokens: Math.min(max_tokens, 200),
+        temperature: adjustedTemperature,
+        max_tokens: adjustedMaxTokens,
         stream,
       };
 
       console.log('📤 Sending request to AI API...');
+      console.log('📦 Model:', this.model);
+      console.log('📦 Messages:', truncatedMessages.length);
 
       const response = await this.fetchWithTimeout(
         `${this.baseURL}/chat/completions`,
@@ -76,7 +82,7 @@ class AIService {
           },
           body: JSON.stringify(requestBody),
         },
-        10000 // 10 second timeout
+        isGemini ? 15000 : 20000 // Shorter timeout for Gemini
       );
 
       if (!response.ok) {
@@ -87,19 +93,72 @@ class AIService {
           errorData = { error: { message: 'Unknown error' } };
         }
         
-        console.error('❌ AI API Error Response:', errorData);
+        console.error('❌ AI API Error:', errorData);
         
-        // Return fallback instead of throwing
+        // Try fallback model if Gemini fails
+        if (this.model.includes('gemini')) {
+          console.log('🔄 Trying fallback model: myt/grok-4.6-free');
+          return this.chatCompletionWithFallback(messages, options);
+        }
+        
         return this.getFallbackResponse(messages);
       }
 
       const data = await response.json();
-      console.log('✅ AI API Response received successfully');
-      
+      console.log('✅ AI Response received successfully');
       return data;
     } catch (error) {
       console.error('❌ AI Service Error:', error);
-      // Return fallback response instead of throwing
+      
+      // Try fallback model on error
+      if (this.model.includes('gemini')) {
+        console.log('🔄 Trying fallback model on error: myt/grok-4.6-free');
+        return this.chatCompletionWithFallback(messages, options);
+      }
+      
+      return this.getFallbackResponse(messages);
+    }
+  }
+
+  /**
+   * Try with fallback model
+   */
+  async chatCompletionWithFallback(messages, options = {}) {
+    try {
+      const fallbackModel = 'myt/grok-4.6-free';
+      console.log('📦 Using fallback model:', fallbackModel);
+      
+      const { temperature = 0.5, max_tokens = 200 } = options;
+      
+      const requestBody = {
+        model: fallbackModel,
+        messages: messages,
+        temperature: Math.min(temperature, 0.5),
+        max_tokens: Math.min(max_tokens, 200),
+      };
+
+      const response = await this.fetchWithTimeout(
+        `${this.baseURL}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(requestBody),
+        },
+        15000
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log('✅ Fallback model response received');
+        return data;
+      }
+      
+      return this.getFallbackResponse(messages);
+    } catch (error) {
+      console.error('❌ Fallback model error:', error);
       return this.getFallbackResponse(messages);
     }
   }
@@ -110,7 +169,7 @@ class AIService {
   getFallbackResponse(messages) {
     const userMessage = messages.find(m => m.role === 'user')?.content || '';
     
-    let responseText = "I'm sorry, but the AI service is currently unavailable. Here are some helpful resources instead:\n\n";
+    let responseText = "I'm currently experiencing technical difficulties. Here are some helpful resources instead:\n\n";
     
     if (userMessage.toLowerCase().includes('study') || userMessage.toLowerCase().includes('exam')) {
       responseText += "📚 **Study Tips:**\n- Review your course materials regularly\n- Create a study schedule\n- Practice with past exam questions\n- Join study groups with classmates\n\n";
@@ -133,154 +192,6 @@ class AIService {
       model: 'fallback',
       usage: { total_tokens: 0 }
     };
-  }
-
-  /**
-   * Streaming chat completion with fallback
-   */
-  async streamChatCompletion(messages, onChunk, options = {}) {
-    try {
-      if (!this.apiKey || this.apiKey === 'sk-f507f08a0...........................................') {
-        // Simulate streaming with fallback
-        const fallback = this.getFallbackResponse(messages);
-        const text = fallback.choices[0].message.content;
-        const words = text.split(' ');
-        let index = 0;
-        
-        const interval = setInterval(() => {
-          if (index < words.length) {
-            onChunk(words[index] + ' ', false);
-            index++;
-          } else {
-            clearInterval(interval);
-            onChunk(null, true);
-          }
-        }, 50);
-        return;
-      }
-
-      const { temperature = 0.5, max_tokens = 200 } = options;
-
-      const response = await this.fetchWithTimeout(
-        `${this.baseURL}/chat/completions`,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`,
-          },
-          body: JSON.stringify({
-            model: this.model,
-            messages: messages,
-            temperature: Math.min(temperature, 0.5),
-            max_tokens: Math.min(max_tokens, 200),
-            stream: true,
-          }),
-        },
-        15000
-      );
-
-      if (!response.ok) {
-        // Simulate streaming with fallback
-        const fallback = this.getFallbackResponse(messages);
-        const text = fallback.choices[0].message.content;
-        const words = text.split(' ');
-        let index = 0;
-        
-        const interval = setInterval(() => {
-          if (index < words.length) {
-            onChunk(words[index] + ' ', false);
-            index++;
-          } else {
-            clearInterval(interval);
-            onChunk(null, true);
-          }
-        }, 50);
-        return;
-      }
-
-      const reader = response.body.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
-
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
-
-        for (const line of lines) {
-          if (line.trim() === '') continue;
-          if (line.startsWith('data: ')) {
-            const data = line.slice(6);
-            if (data === '[DONE]') {
-              onChunk(null, true);
-              return;
-            }
-            try {
-              const parsed = JSON.parse(data);
-              const content = parsed.choices?.[0]?.delta?.content || '';
-              if (content) {
-                onChunk(content, false);
-              }
-            } catch (e) {
-              // Skip invalid JSON
-            }
-          }
-        }
-      }
-    } catch (error) {
-      console.error('❌ Streaming Error:', error);
-      // Simulate streaming with fallback
-      const fallback = this.getFallbackResponse(messages);
-      const text = fallback.choices[0].message.content;
-      const words = text.split(' ');
-      let index = 0;
-      
-      const interval = setInterval(() => {
-        if (index < words.length) {
-          onChunk(words[index] + ' ', false);
-          index++;
-        } else {
-          clearInterval(interval);
-          onChunk(null, true);
-        }
-      }, 50);
-    }
-  }
-
-  /**
-   * Get list of available models
-   */
-  async getModels() {
-    try {
-      if (!this.apiKey || this.apiKey === 'sk-f507f08a0...........................................') {
-        return [];
-      }
-
-      const response = await this.fetchWithTimeout(
-        `${this.baseURL}/models`,
-        {
-          method: 'GET',
-          headers: {
-            'Authorization': `Bearer ${this.apiKey}`,
-          },
-        },
-        5000
-      );
-
-      if (!response.ok) {
-        return [];
-      }
-
-      const data = await response.json();
-      return data.data || [];
-    } catch (error) {
-      console.error('❌ Get Models Error:', error);
-      return [];
-    }
   }
 }
 
