@@ -2,20 +2,40 @@ import fetch from 'node-fetch';
 
 class AIService {
   constructor() {
-    this.baseURL = 'https://tokenin.my.id/v1';
-    this.apiKey = process.env.AI_API_KEY || 'sk-f507f08a0...........................................';
-    this.model = 'myt/gemini-3.5-flash-free';
+    this.baseURL = process.env.AI_BASE_URL || 'https://tokenin.my.id/v1';
+    this.apiKey = process.env.AI_API_KEY;
+    this.model = process.env.AI_MODEL || 'myt/gemini-3.5-flash-free';
+    
+    console.log('🤖 AI Service initialized');
+    console.log('📡 Base URL:', this.baseURL);
+    console.log('📦 Model:', this.model);
+    console.log('🔑 API Key exists:', !!this.apiKey);
   }
 
   /**
    * Chat completion with the AI model
-   * @param {Array} messages - Array of message objects { role, content }
-   * @param {Object} options - Additional options like temperature, max_tokens, etc.
-   * @returns {Promise<Object>} - AI response
    */
   async chatCompletion(messages, options = {}) {
     try {
+      if (!this.apiKey) {
+        throw new Error('AI_API_KEY is not configured in environment variables');
+      }
+
       const { temperature = 0.7, max_tokens = 1024, stream = false } = options;
+
+      console.log('📤 Sending request to AI API...');
+      console.log('📦 Model:', this.model);
+      console.log('📦 Messages count:', messages.length);
+
+      const requestBody = {
+        model: this.model,
+        messages: messages,
+        temperature,
+        max_tokens,
+        stream,
+      };
+
+      console.log('📦 Request body:', JSON.stringify(requestBody, null, 2));
 
       const response = await fetch(`${this.baseURL}/chat/completions`, {
         method: 'POST',
@@ -23,36 +43,54 @@ class AIService {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${this.apiKey}`,
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: messages,
-          temperature,
-          max_tokens,
-          stream,
-        }),
+        body: JSON.stringify(requestBody),
       });
 
+      console.log('📥 AI API Response Status:', response.status);
+
       if (!response.ok) {
-        const errorData = await response.json();
+        let errorData;
+        try {
+          errorData = await response.json();
+        } catch {
+          errorData = { error: { message: 'Unknown error' } };
+        }
+        
+        console.error('❌ AI API Error Response:', errorData);
+        
+        // Handle specific error codes
+        if (response.status === 401) {
+          throw new Error('Invalid API key. Please check your AI_API_KEY.');
+        } else if (response.status === 402) {
+          throw new Error('Insufficient balance. Please top up your account.');
+        } else if (response.status === 404) {
+          throw new Error(`Model "${this.model}" not found. Please check available models.`);
+        } else if (response.status === 429) {
+          throw new Error('Too many requests. Please try again later.');
+        }
+        
         throw new Error(errorData.error?.message || `API Error: ${response.status}`);
       }
 
       const data = await response.json();
+      console.log('✅ AI API Response received successfully');
+      
       return data;
     } catch (error) {
-      console.error('AI Service Error:', error);
+      console.error('❌ AI Service Error:', error);
       throw error;
     }
   }
 
   /**
    * Streaming chat completion
-   * @param {Array} messages - Array of message objects
-   * @param {Function} onChunk - Callback for each chunk
-   * @param {Object} options - Additional options
    */
   async streamChatCompletion(messages, onChunk, options = {}) {
     try {
+      if (!this.apiKey) {
+        throw new Error('AI_API_KEY is not configured in environment variables');
+      }
+
       const { temperature = 0.7, max_tokens = 1024 } = options;
 
       const response = await fetch(`${this.baseURL}/chat/completions`, {
@@ -108,17 +146,20 @@ class AIService {
         }
       }
     } catch (error) {
-      console.error('Streaming Error:', error);
+      console.error('❌ Streaming Error:', error);
       throw error;
     }
   }
 
   /**
    * Get list of available models
-   * @returns {Promise<Array>} - List of models
    */
   async getModels() {
     try {
+      if (!this.apiKey) {
+        throw new Error('AI_API_KEY is not configured in environment variables');
+      }
+
       const response = await fetch(`${this.baseURL}/models`, {
         method: 'GET',
         headers: {
@@ -133,10 +174,12 @@ class AIService {
       const data = await response.json();
       return data.data || [];
     } catch (error) {
-      console.error('Get Models Error:', error);
+      console.error('❌ Get Models Error:', error);
       throw error;
     }
   }
 }
 
-export default new AIService();
+// Export a singleton instance
+const aiService = new AIService();
+export default aiService;

@@ -8,6 +8,10 @@ export const chatWithAI = async (req, res, next) => {
   try {
     const { messages, temperature, max_tokens } = req.body;
 
+    console.log('📨 AI Chat Request received');
+    console.log('📦 Messages:', messages);
+    console.log('🔑 API Key exists:', !!process.env.AI_API_KEY);
+
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({
         status: 'error',
@@ -21,6 +25,8 @@ export const chatWithAI = async (req, res, next) => {
       max_tokens: max_tokens || 1024,
     });
 
+    console.log('✅ AI Response received');
+
     return res.status(200).json({
       status: 'success',
       data: {
@@ -30,8 +36,20 @@ export const chatWithAI = async (req, res, next) => {
       },
     });
   } catch (err) {
-    console.error('AI Chat Error:', err);
-    next(err);
+    console.error('❌ AI Chat Error:', err);
+    console.error('❌ Error Stack:', err.stack);
+    
+    // Return more detailed error for debugging
+    return res.status(500).json({
+      status: 'error',
+      code: 'AI_SERVICE_ERROR',
+      message: err.message || 'Failed to get AI response',
+      debug: process.env.NODE_ENV !== 'production' ? {
+        error: err.message,
+        stack: err.stack,
+        name: err.name
+      } : undefined
+    });
   }
 };
 
@@ -42,6 +60,8 @@ export const chatWithAI = async (req, res, next) => {
 export const streamChatWithAI = async (req, res, next) => {
   try {
     const { messages, temperature, max_tokens } = req.body;
+
+    console.log('📨 AI Stream Request received');
 
     if (!messages || !Array.isArray(messages) || messages.length === 0) {
       return res.status(400).json({
@@ -72,7 +92,7 @@ export const streamChatWithAI = async (req, res, next) => {
       }
     );
   } catch (err) {
-    console.error('AI Stream Error:', err);
+    console.error('❌ AI Stream Error:', err);
     res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
     res.end();
   }
@@ -90,7 +110,42 @@ export const getAvailableModels = async (req, res, next) => {
       data: models,
     });
   } catch (err) {
-    console.error('Get Models Error:', err);
+    console.error('❌ Get Models Error:', err);
     next(err);
+  }
+};
+
+/**
+ * GET /api/ai/test
+ * Test the AI API connection
+ */
+export const testAIConnection = async (req, res, next) => {
+  try {
+    const testMessage = [
+      { role: 'user', content: 'Say "Hello! AI is working!" in one sentence.' }
+    ];
+
+    const response = await aiService.chatCompletion(testMessage, {
+      temperature: 0.5,
+      max_tokens: 50,
+    });
+
+    return res.status(200).json({
+      status: 'success',
+      message: 'AI API is working!',
+      response: response.choices?.[0]?.message?.content || 'No response',
+      model: response.model || 'myt/gemini-3.5-flash-free',
+    });
+  } catch (err) {
+    console.error('❌ AI Test Error:', err);
+    return res.status(500).json({
+      status: 'error',
+      code: 'AI_TEST_FAILED',
+      message: err.message || 'Failed to connect to AI API',
+      debug: process.env.NODE_ENV !== 'production' ? {
+        error: err.message,
+        stack: err.stack,
+      } : undefined
+    });
   }
 };

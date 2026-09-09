@@ -1,10 +1,18 @@
 import express from 'express';
 import { authenticate } from '../Middleware/authenticate.js';
-import { chatWithAI, streamChatWithAI, getAvailableModels } from '../Controllers/aiController.js';
+import { 
+  chatWithAI, 
+  streamChatWithAI, 
+  getAvailableModels,
+  testAIConnection 
+} from '../Controllers/aiController.js';
 
 const router = express.Router();
 
-// All AI routes require authentication
+// Public test endpoint (no auth required)
+router.get('/test', testAIConnection);
+
+// All other AI routes require authentication
 router.use(authenticate);
 
 // Chat endpoints
