@@ -88,12 +88,19 @@ export const login = async (req, res, next) => {
       console.error('⚠️ Failed to update lastLogin:', err)
     );
 
-    // Log activity (fire and forget)
-    logActivity({
-      userId: user._id,
-      action: 'login',
-      metadata: { email: user.email, ip: req.ip },
-    }).catch((logErr) => console.error('⚠️ Activity log error:', logErr));
+    // Log activity (fire and forget). Wrapped in try/catch rather than
+    // chaining .catch() directly, since that throws synchronously (and was
+    // the cause of a 500 here) if logActivity isn't guaranteed to return a
+    // real Promise.
+    try {
+      await logActivity({
+        userId: user._id,
+        action: 'login',
+        metadata: { email: user.email, ip: req.ip },
+      });
+    } catch (logErr) {
+      console.error('⚠️ Activity log error:', logErr);
+    }
 
     return res.status(200).json({
       status: 'success',
@@ -166,9 +173,11 @@ export const register = async (req, res, next) => {
       accountStatus: 'pending',
     });
 
-    logActivity({ userId: user._id, action: 'register', metadata: { email: user.email } }).catch(
-      (err) => console.error('⚠️ Activity log error:', err)
-    );
+    try {
+      await logActivity({ userId: user._id, action: 'register', metadata: { email: user.email } });
+    } catch (logErr) {
+      console.error('⚠️ Activity log error:', logErr);
+    }
 
     return res.status(201).json({
       status: 'success',
