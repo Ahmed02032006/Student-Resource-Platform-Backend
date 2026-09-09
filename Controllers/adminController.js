@@ -17,8 +17,10 @@ cloudinary.config({
 // ── GET /api/admin/accounts?status=pending ────────────────────────────────────
 export const getAccounts = async (req, res, next) => {
   try {
-    const filter = { role: 'user' };
+    const filter = {};
     if (req.query.status) filter.accountStatus = req.query.status;
+    
+    if (req.query.role) filter.role = req.query.role;
 
     const users = await User.find(filter)
       .select('-passwordHash')
