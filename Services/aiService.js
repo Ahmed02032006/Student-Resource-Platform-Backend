@@ -3,17 +3,15 @@ import fetch from 'node-fetch';
 
 class AIService {
   constructor() {
-    // Use Groq API
     this.baseURL = 'https://api.groq.com/openai/v1';
-    this.apiKey = process.env.AI_API_KEY; // Make sure this is your Groq API key
-    this.model = 'gemma2-9b-it'; // or 'mixtral-8x7b-32768', 'llama3-70b-8192'
+    this.apiKey = process.env.GROQ_API_KEY;
+    this.model = process.env.AI_MODEL || 'gemma2-9b-it';
     this.timeout = 30000;
     
     console.log('🤖 AI Service initialized (Groq)');
     console.log('📡 Base URL:', this.baseURL);
     console.log('📦 Model:', this.model);
     console.log('🔑 API Key exists:', !!this.apiKey);
-    console.log('🔑 API Key length:', this.apiKey?.length || 0);
   }
 
   async fetchWithTimeout(url, options, timeout = this.timeout) {
@@ -38,15 +36,13 @@ class AIService {
 
   async chatCompletion(messages, options = {}) {
     try {
-      // Check API key
       if (!this.apiKey || this.apiKey.length < 10) {
         console.error('❌ Invalid API Key');
         return this.getFallbackResponse(messages);
       }
 
-      const { temperature = 0.7, max_tokens = 1024 } = options;
+      const { temperature = 0.5, max_tokens = 200 } = options;
 
-      // Ensure messages are in the correct format
       const formattedMessages = messages.map(msg => ({
         role: msg.role || 'user',
         content: msg.content || ''
@@ -56,13 +52,12 @@ class AIService {
         model: this.model,
         messages: formattedMessages,
         temperature: temperature,
-        max_tokens: Math.min(max_tokens, 2048), // Groq max
+        max_tokens: Math.min(max_tokens, 2048),
         stream: false,
       };
 
       console.log('📤 Sending request to Groq API...');
       console.log('📦 Model:', this.model);
-      console.log('📦 Messages count:', formattedMessages.length);
 
       const response = await this.fetchWithTimeout(
         `${this.baseURL}/chat/completions`,
@@ -77,13 +72,10 @@ class AIService {
         30000
       );
 
-      // Log the response status
       console.log('📥 Response Status:', response.status);
 
-      // Get response as text first for debugging
       const responseText = await response.text();
-      console.log('📄 Raw Response:', responseText.substring(0, 500));
-
+      
       let data;
       try {
         data = JSON.parse(responseText);
@@ -94,37 +86,6 @@ class AIService {
 
       if (!response.ok) {
         console.error('❌ Groq API Error:', data);
-        
-        // Try with a different model
-        const fallbackModels = ['mixtral-8x7b-32768', 'llama3-70b-8192'];
-        for (const fallbackModel of fallbackModels) {
-          console.log(`🔄 Trying fallback model: ${fallbackModel}`);
-          try {
-            const fallbackBody = { ...requestBody, model: fallbackModel };
-            const fallbackResponse = await this.fetchWithTimeout(
-              `${this.baseURL}/chat/completions`,
-              {
-                method: 'POST',
-                headers: {
-                  'Content-Type': 'application/json',
-                  'Authorization': `Bearer ${this.apiKey}`,
-                },
-                body: JSON.stringify(fallbackBody),
-              },
-              30000
-            );
-            
-            if (fallbackResponse.ok) {
-              const fallbackText = await fallbackResponse.text();
-              const fallbackData = JSON.parse(fallbackText);
-              console.log('✅ Fallback model worked!');
-              return fallbackData;
-            }
-          } catch (fallbackError) {
-            console.log(`❌ Fallback ${fallbackModel} failed:`, fallbackError.message);
-          }
-        }
-        
         return this.getFallbackResponse(messages);
       }
 
@@ -133,6 +94,164 @@ class AIService {
     } catch (error) {
       console.error('❌ AI Service Error:', error);
       return this.getFallbackResponse(messages);
+    }
+  }
+
+  async streamChatCompletion(messages, onChunk, options = {}) {
+    try {
+      if (!this.apiKey || this.apiKey.length < 10) {
+        console.error('❌ Invalid API Key');
+        // Send fallback as stream
+        const fallback = this.getFallbackResponse(messages);
+        const text = fallback.choices[0].message.content;
+        const words = text.split(' ');
+        let index = 0;
+        
+        const interval = setInterval(() => {
+          if (index < words.length) {
+            onChunk(words[index] + ' ', false);
+            index++;
+          } else {
+            clearInterval(interval);
+            onChunk(null, true);
+          }
+        }, 30);
+        return;
+      }
+
+      const { temperature = 0.5, max_tokens = 200 } = options;
+
+      const formattedMessages = messages.map(msg => ({
+        role: msg.role || 'user',
+        content: msg.content || ''
+      }));
+
+      const requestBody = {
+        model: this.model,
+        messages: formattedMessages,
+        temperature: temperature,
+        max_tokens: Math.min(max_tokens, 2048),
+        stream: true,
+      };
+
+      console.log('📤 Sending streaming request to Groq API...');
+
+      const response = await this.fetchWithTimeout(
+        `${this.baseURL}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(requestBody),
+        },
+        60000 // Longer timeout for streaming
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('❌ Groq API Error:', errorText);
+        // Send fallback as stream
+        const fallback = this.getFallbackResponse(messages);
+        const text = fallback.choices[0].message.content;
+        const words = text.split(' ');
+        let index = 0;
+        
+        const interval = setInterval(() => {
+          if (index < words.length) {
+            onChunk(words[index] + ' ', false);
+            index++;
+          } else {
+            clearInterval(interval);
+            onChunk(null, true);
+          }
+        }, 30);
+        return;
+      }
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          if (line.trim() === '') continue;
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6);
+            if (data === '[DONE]') {
+              onChunk(null, true);
+              return;
+            }
+            try {
+              const parsed = JSON.parse(data);
+              const content = parsed.choices?.[0]?.delta?.content || '';
+              if (content) {
+                onChunk(content, false);
+              }
+            } catch (e) {
+              // Skip invalid JSON
+            }
+          }
+        }
+      }
+      
+      onChunk(null, true);
+    } catch (error) {
+      console.error('❌ Streaming Error:', error);
+      // Send fallback as stream on error
+      const fallback = this.getFallbackResponse(messages);
+      const text = fallback.choices[0].message.content;
+      const words = text.split(' ');
+      let index = 0;
+      
+      const interval = setInterval(() => {
+        if (index < words.length) {
+          onChunk(words[index] + ' ', false);
+          index++;
+        } else {
+          clearInterval(interval);
+          onChunk(null, true);
+        }
+      }, 30);
+    }
+  }
+
+  async getModels() {
+    try {
+      if (!this.apiKey || this.apiKey.length < 10) {
+        console.error('❌ Invalid API Key');
+        return [];
+      }
+
+      const response = await this.fetchWithTimeout(
+        `${this.baseURL}/models`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+        },
+        10000
+      );
+
+      if (!response.ok) {
+        console.error('❌ Failed to fetch models');
+        return [];
+      }
+
+      const data = await response.json();
+      return data.data || [];
+    } catch (error) {
+      console.error('❌ Get Models Error:', error);
+      return [];
     }
   }
 
