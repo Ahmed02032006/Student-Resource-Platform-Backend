@@ -5,7 +5,7 @@ class AIService {
   constructor() {
     this.baseURL = 'https://api.groq.com/openai/v1';
     this.apiKey = process.env.GROQ_API_KEY;
-    this.model = 'gemma2-9b-it';
+    this.model = 'openai/gpt-oss-120b';
     this.timeout = 30000;
     
     console.log('🤖 AI Service initialized (Groq)');
