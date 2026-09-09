@@ -1,4 +1,3 @@
-// Routes/aiRoutes.js
 import express from 'express';
 import { authenticate } from '../Middleware/authenticate.js';
 import { 

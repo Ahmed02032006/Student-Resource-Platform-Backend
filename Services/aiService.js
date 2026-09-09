@@ -1,11 +1,10 @@
-// Services/aiService.js
 import fetch from 'node-fetch';
 
 class AIService {
   constructor() {
-    this.baseURL = 'https://api.groq.com/openai/v1';
+    this.baseURL = process.env.AI_BASE_URL;
     this.apiKey = process.env.GROQ_API_KEY;
-    this.model = 'openai/gpt-oss-120b';
+    this.model = process.env.AI_MODEL;
     this.timeout = 30000;
     
     console.log('🤖 AI Service initialized (Groq)');

@@ -1,4 +1,3 @@
-// Controllers/aiController.js
 import aiService from '../Services/aiService.js';
 
 export const chatWithAI = async (req, res, next) => {
