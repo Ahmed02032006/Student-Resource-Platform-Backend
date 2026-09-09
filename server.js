@@ -11,6 +11,7 @@ import enrollmentRoutes from './Routes/enrollmentRoutes.js';
 import resourceRoutes from './Routes/resourceRoutes.js';
 import adminRoutes from './Routes/adminRoutes.js';
 import assessmentRoutes from './Routes/assessmentRoutes.js';
+import aiRoutes from './Routes/aiRoutes.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -68,6 +69,7 @@ app.use('/api/enrollments', enrollmentRoutes);
 app.use('/api/resources', resourceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/assessments', assessmentRoutes);
+app.use('/api/ai', aiRoutes);
 
 // ── 404 handler ────────────────────────────────────────────────────────────────
 // Must come AFTER every real route, or it swallows requests meant for them.
