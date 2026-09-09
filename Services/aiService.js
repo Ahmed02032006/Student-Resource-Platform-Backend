@@ -2,9 +2,9 @@ import fetch from 'node-fetch';
 
 class AIService {
   constructor() {
-    this.baseURL = process.env.AI_BASE_URL;
+    this.baseURL = process.env.AI_BASE_URL || 'https://api.groq.com/openai/v1';
     this.apiKey = process.env.GROQ_API_KEY;
-    this.model = process.env.AI_MODEL;
+    this.model = process.env.AI_MODEL || 'gemma2-9b-it';
     this.timeout = 30000;
     
     console.log('🤖 AI Service initialized (Groq)');
@@ -33,6 +33,35 @@ class AIService {
     }
   }
 
+  /**
+   * Truncate messages to keep them short
+   */
+  truncateMessages(messages) {
+    return messages.map(msg => ({
+      ...msg,
+      content: msg.content?.length > 500 ? msg.content.substring(0, 500) + '...' : msg.content
+    }));
+  }
+
+  /**
+   * Add system prompt to restrict response length
+   */
+  getSystemPrompt() {
+    return {
+      role: 'system',
+      content: `You are a helpful academic assistant. Provide concise, clear, and structured responses.
+      
+IMPORTANT RULES:
+1. Keep responses SHORT and TO THE POINT (maximum 200-300 words)
+2. Use bullet points (-) for lists instead of long paragraphs
+3. Provide only the most essential information
+4. If the user asks for a schedule, provide a simple 7-day plan with 1-2 bullet points per day
+5. Avoid excessive explanations or examples
+6. Use tables only when absolutely necessary (max 3 columns)
+7. Response should be scannable and easy to read`
+    };
+  }
+
   async chatCompletion(messages, options = {}) {
     try {
       if (!this.apiKey || this.apiKey.length < 10) {
@@ -40,9 +69,16 @@ class AIService {
         return this.getFallbackResponse(messages);
       }
 
-      const { temperature = 0.5, max_tokens = 200 } = options;
+      const { temperature = 0.3, max_tokens = 300 } = options; // Reduced max_tokens
 
-      const formattedMessages = messages.map(msg => ({
+      // Truncate messages to keep them short
+      const truncatedMessages = this.truncateMessages(messages);
+      
+      // Add system prompt to restrict length
+      const systemPrompt = this.getSystemPrompt();
+      const allMessages = [systemPrompt, ...truncatedMessages];
+
+      const formattedMessages = allMessages.map(msg => ({
         role: msg.role || 'user',
         content: msg.content || ''
       }));
@@ -50,13 +86,14 @@ class AIService {
       const requestBody = {
         model: this.model,
         messages: formattedMessages,
-        temperature: temperature,
-        max_tokens: Math.min(max_tokens, 2048),
+        temperature: Math.min(temperature, 0.3), // Lower temperature for more concise responses
+        max_tokens: Math.min(max_tokens, 500), // Max 500 tokens for short responses
         stream: false,
       };
 
       console.log('📤 Sending request to Groq API...');
       console.log('📦 Model:', this.model);
+      console.log('📦 Max tokens:', requestBody.max_tokens);
 
       const response = await this.fetchWithTimeout(
         `${this.baseURL}/chat/completions`,
@@ -118,9 +155,16 @@ class AIService {
         return;
       }
 
-      const { temperature = 0.5, max_tokens = 200 } = options;
+      const { temperature = 0.3, max_tokens = 300 } = options; // Reduced max_tokens
 
-      const formattedMessages = messages.map(msg => ({
+      // Truncate messages to keep them short
+      const truncatedMessages = this.truncateMessages(messages);
+      
+      // Add system prompt to restrict length
+      const systemPrompt = this.getSystemPrompt();
+      const allMessages = [systemPrompt, ...truncatedMessages];
+
+      const formattedMessages = allMessages.map(msg => ({
         role: msg.role || 'user',
         content: msg.content || ''
       }));
@@ -128,12 +172,13 @@ class AIService {
       const requestBody = {
         model: this.model,
         messages: formattedMessages,
-        temperature: temperature,
-        max_tokens: Math.min(max_tokens, 2048),
+        temperature: Math.min(temperature, 0.3), // Lower temperature for more concise responses
+        max_tokens: Math.min(max_tokens, 500), // Max 500 tokens for short responses
         stream: true,
       };
 
       console.log('📤 Sending streaming request to Groq API...');
+      console.log('📦 Max tokens:', requestBody.max_tokens);
 
       const response = await this.fetchWithTimeout(
         `${this.baseURL}/chat/completions`,
