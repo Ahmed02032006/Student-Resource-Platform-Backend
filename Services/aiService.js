@@ -5,7 +5,7 @@ class AIService {
   constructor() {
     this.baseURL = process.env.AI_BASE_URL || 'https://tokenin.my.id/v1';
     this.apiKey = process.env.AI_API_KEY;
-    this.model = 'myt/grok-4.6-free';
+    this.model = 'myt/mimo-v2.5-free';
     this.timeout = 20000; // 20 seconds timeout for Gemini
     
     console.log('🤖 AI Service initialized');
