@@ -2,8 +2,6 @@ import express from 'express';
 import { authenticate } from '../Middleware/authenticate.js';
 import { 
   chatWithAI, 
-  streamChatWithAI, 
-  getAvailableModels,
   testAIConnection 
 } from '../Controllers/aiController.js';
 
