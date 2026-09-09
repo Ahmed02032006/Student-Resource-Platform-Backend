@@ -2,12 +2,13 @@
 import fetch from 'node-fetch';
 
 class AIService {
+
   constructor() {
-    this.baseURL = process.env.AI_BASE_URL || 'https://tokenin.my.id/v1';
+    this.baseURL = 'https://api.groq.com/openai/v1';
     this.apiKey = process.env.AI_API_KEY;
-    this.model = 'myt/mimo-v2.5-free';
+    this.model = 'gemma2-9b-it';
     this.timeout = 20000; // 20 seconds timeout for Gemini
-    
+
     console.log('🤖 AI Service initialized');
     console.log('📡 Base URL:', this.baseURL);
     console.log('📦 Model:', this.model);
@@ -20,7 +21,7 @@ class AIService {
   async fetchWithTimeout(url, options, timeout = this.timeout) {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), timeout);
-    
+
     try {
       const response = await fetch(url, {
         ...options,
@@ -92,15 +93,15 @@ class AIService {
         } catch {
           errorData = { error: { message: 'Unknown error' } };
         }
-        
+
         console.error('❌ AI API Error:', errorData);
-        
+
         // Try fallback model if Gemini fails
         if (this.model.includes('gemini')) {
           console.log('🔄 Trying fallback model: myt/grok-4.6-free');
           return this.chatCompletionWithFallback(messages, options);
         }
-        
+
         return this.getFallbackResponse(messages);
       }
 
@@ -109,13 +110,13 @@ class AIService {
       return data;
     } catch (error) {
       console.error('❌ AI Service Error:', error);
-      
+
       // Try fallback model on error
       if (this.model.includes('gemini')) {
         console.log('🔄 Trying fallback model on error: myt/grok-4.6-free');
         return this.chatCompletionWithFallback(messages, options);
       }
-      
+
       return this.getFallbackResponse(messages);
     }
   }
@@ -127,9 +128,9 @@ class AIService {
     try {
       const fallbackModel = 'myt/grok-4.6-free';
       console.log('📦 Using fallback model:', fallbackModel);
-      
+
       const { temperature = 0.5, max_tokens = 200 } = options;
-      
+
       const requestBody = {
         model: fallbackModel,
         messages: messages,
@@ -155,7 +156,7 @@ class AIService {
         console.log('✅ Fallback model response received');
         return data;
       }
-      
+
       return this.getFallbackResponse(messages);
     } catch (error) {
       console.error('❌ Fallback model error:', error);
@@ -168,9 +169,9 @@ class AIService {
    */
   getFallbackResponse(messages) {
     const userMessage = messages.find(m => m.role === 'user')?.content || '';
-    
+
     let responseText = "I'm currently experiencing technical difficulties. Here are some helpful resources instead:\n\n";
-    
+
     if (userMessage.toLowerCase().includes('study') || userMessage.toLowerCase().includes('exam')) {
       responseText += "📚 **Study Tips:**\n- Review your course materials regularly\n- Create a study schedule\n- Practice with past exam questions\n- Join study groups with classmates\n\n";
     } else if (userMessage.toLowerCase().includes('gpa')) {
@@ -180,9 +181,9 @@ class AIService {
     } else {
       responseText += "💡 **Quick Tips:**\n- Check your course materials in the Courses tab\n- Use the GPA Calculator to track your progress\n- Contact your instructors for specific questions\n\n";
     }
-    
+
     responseText += "Please try again later or contact support if the issue persists. 🎓";
-    
+
     return {
       choices: [{
         message: {
