@@ -52,6 +52,12 @@ const userSchema = new mongoose.Schema(
       type: rejectionInfoSchema,
       default: () => ({}),
     },
+    // Timestamp of the user's most recent successful login. Updated in
+    // authController.login on each successful sign-in.
+    lastLogin: {
+      type: Date,
+      default: null,
+    },
   },
   { timestamps: true }
 );
@@ -73,17 +79,6 @@ userSchema.pre('save', async function (next) {
 // ── Instance method: compare a plain-text password with the stored hash ────────
 userSchema.methods.comparePassword = async function (plainPassword) {
   return bcrypt.compare(plainPassword, this.passwordHash);
-};
-
-userSchema.methods.comparePassword = async function (plainPassword) {
-  try {
-    const isMatch = await bcrypt.compare(plainPassword, this.passwordHash);
-    console.log('🔐 Password compare result:', isMatch);
-    return isMatch;
-  } catch (err) {
-    console.error('❌ Password compare error:', err);
-    throw err;
-  }
 };
 
 const User = mongoose.model('User', userSchema);

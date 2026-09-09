@@ -23,14 +23,10 @@ const generateUniqueUserId = () =>
 
 // ── POST /api/auth/login ───────────────────────────────────────────────────────
 export const login = async (req, res, next) => {
-  console.log('🔐 Login attempt received');
-  console.log('Request body:', req.body);
-  
   try {
     const { email, password } = req.body;
 
     if (!email || !password) {
-      console.log('❌ Missing email or password');
       return res.status(400).json({
         status: 'error',
         code: 'VALIDATION_ERROR',
@@ -38,25 +34,18 @@ export const login = async (req, res, next) => {
       });
     }
 
-    console.log('🔍 Looking for user with email:', email);
-    
     const user = await User.findOne({ email: email.toLowerCase().trim() });
 
     if (!user) {
-      console.log('❌ User not found:', email);
       return res.status(401).json({
         status: 'error',
         code: 'INVALID_CREDENTIALS',
         message: 'Invalid email or password.',
       });
     }
-
-    console.log('✅ User found:', user.email);
-    console.log('🔐 Checking password...');
 
     const passwordMatch = await user.comparePassword(password);
     if (!passwordMatch) {
-      console.log('❌ Password mismatch for user:', email);
       return res.status(401).json({
         status: 'error',
         code: 'INVALID_CREDENTIALS',
@@ -64,11 +53,8 @@ export const login = async (req, res, next) => {
       });
     }
 
-    console.log('✅ Password matched');
-
     // ── Account status gate ────────────────────────────────────────────────────
     if (user.accountStatus === 'pending') {
-      console.log('⏳ Account pending for user:', email);
       return res.status(403).json({
         status: 'error',
         code: 'ACCOUNT_PENDING',
@@ -77,7 +63,6 @@ export const login = async (req, res, next) => {
     }
 
     if (user.accountStatus === 'rejected') {
-      console.log('❌ Account rejected for user:', email);
       return res.status(403).json({
         status: 'error',
         code: 'ACCOUNT_REJECTED',
@@ -87,21 +72,28 @@ export const login = async (req, res, next) => {
     }
 
     // ── Approved — issue JWT ───────────────────────────────────────────────────
-    console.log('🔑 Issuing token for user:', email);
     const token = issueToken(user);
 
-    // Log activity (fire and forget)
-    try {
-      await logActivity({
-        userId: user._id,
-        action: 'login',
-        metadata: { email: user.email, ip: req.ip },
-      });
-    } catch (logErr) {
-      console.error('Activity log error:', logErr);
-    }
+    // Capture the PREVIOUS login time before overwriting it, so the response
+    // can tell the user "you last logged in at X" rather than the moment
+    // that's about to happen right now.
+    const previousLogin = user.lastLogin;
+    const now = new Date();
 
-    console.log('✅ Login successful for user:', email);
+    // Fire-and-forget-ish, but we still await it so the response reflects the
+    // saved value reliably. updateOne() skips full document validation/hooks
+    // (no re-hashing of passwordHash), so this adds negligible latency —
+    // unlike calling user.save() here.
+    User.updateOne({ _id: user._id }, { $set: { lastLogin: now } }).catch((err) =>
+      console.error('⚠️ Failed to update lastLogin:', err)
+    );
+
+    // Log activity (fire and forget)
+    logActivity({
+      userId: user._id,
+      action: 'login',
+      metadata: { email: user.email, ip: req.ip },
+    }).catch((logErr) => console.error('⚠️ Activity log error:', logErr));
 
     return res.status(200).json({
       status: 'success',
@@ -114,13 +106,12 @@ export const login = async (req, res, next) => {
         role: user.role,
         semester: user.semester,
         accountStatus: user.accountStatus,
+        lastLogin: previousLogin, // the sign-in before this one
       },
     });
   } catch (err) {
-    console.error('❌ Login error details:', err);
-    console.error('❌ Error stack:', err.stack);
-    
-    // Send detailed error for debugging
+    console.error('❌ Login error:', err);
+
     return res.status(500).json({
       status: 'error',
       code: 'INTERNAL_ERROR',
@@ -128,20 +119,17 @@ export const login = async (req, res, next) => {
       debug: process.env.NODE_ENV !== 'production' ? {
         error: err.message,
         stack: err.stack,
-        name: err.name
-      } : undefined
+        name: err.name,
+      } : undefined,
     });
   }
 };
 
 // ── POST /api/auth/register ────────────────────────────────────────────────────
 export const register = async (req, res, next) => {
-  console.log('📝 Registration attempt received');
-  
   try {
     const { name, email, password, semester } = req.body;
 
-    // Basic validation
     if (!name || !email || !password || !semester) {
       return res.status(400).json({
         status: 'error',
@@ -178,7 +166,9 @@ export const register = async (req, res, next) => {
       accountStatus: 'pending',
     });
 
-    logActivity({ userId: user._id, action: 'register', metadata: { email: user.email } });
+    logActivity({ userId: user._id, action: 'register', metadata: { email: user.email } }).catch(
+      (err) => console.error('⚠️ Activity log error:', err)
+    );
 
     return res.status(201).json({
       status: 'success',
@@ -192,8 +182,7 @@ export const register = async (req, res, next) => {
       },
     });
   } catch (err) {
-    console.error('❌ Registration error details:', err);
-    console.error('❌ Error stack:', err.stack);
+    console.error('❌ Registration error:', err);
     next(err);
   }
 };
@@ -212,6 +201,7 @@ export const getMe = async (req, res, next) => {
         role: user.role,
         semester: user.semester,
         accountStatus: user.accountStatus,
+        lastLogin: user.lastLogin,
       },
     });
   } catch (err) {

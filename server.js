@@ -25,6 +25,27 @@ app.use(cors({
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
+// ── Database connection ────────────────────────────────────────────────────────
+// IMPORTANT: this MUST run before any route that touches the DB (i.e. all of
+// them). It previously lived in a middleware registered AFTER the 404
+// handler below, which meant it never actually ran for a matched route —
+// Express had already sent a response before reaching it. The connection
+// itself is cached (see connectToDb.js) so on a warm serverless instance
+// this resolves instantly instead of reconnecting every request.
+app.use(async (_req, res, next) => {
+  try {
+    await connectToDb();
+    next();
+  } catch (err) {
+    console.error('❌ Database connection failed:', err);
+    return res.status(503).json({
+      status: 'error',
+      code: 'DATABASE_UNAVAILABLE',
+      message: 'Database service temporarily unavailable. Please try again in a moment.',
+    });
+  }
+});
+
 // ── Health check ───────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) =>
   res.status(200).json({
@@ -34,6 +55,10 @@ app.get('/api/health', (_req, res) =>
   })
 );
 
+app.get('/', (req, res) => {
+  res.json({ message: `Server is running! || On This Url ${process.env.FRONTEND_URL}` });
+});
+
 // ── API Routes ─────────────────────────────────────────────────────────────────
 app.use('/api/auth', authRoutes);
 app.use('/api/courses', courseRoutes);
@@ -42,14 +67,8 @@ app.use('/api/resources', resourceRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/assessments', assessmentRoutes);
 
-// Health check route
-app.get("/", (req, res) => {
-  res.json(
-    { message: `Server is running! || On This Url ${process.env.FRONTEND_URL}` }
-  );
-});
-
 // ── 404 handler ────────────────────────────────────────────────────────────────
+// Must come AFTER every real route, or it swallows requests meant for them.
 app.use((_req, res) =>
   res.status(404).json({ status: 'error', code: 'NOT_FOUND', message: 'Endpoint not found.' })
 );
@@ -59,7 +78,6 @@ app.use((_req, res) =>
 app.use((err, _req, res, _next) => {
   console.error('[Error]', err);
 
-  // Mongoose cast / validation errors → 400
   if (err.name === 'CastError') {
     return res.status(400).json({ status: 'error', code: 'INVALID_ID', message: 'Invalid ID format.' });
   }
@@ -73,7 +91,6 @@ app.use((err, _req, res, _next) => {
     return res.status(409).json({ status: 'error', code: 'DUPLICATE_KEY', message: `An account with this ${fieldName} already exists.` });
   }
 
-
   return res.status(err.status || 500).json({
     status: 'error',
     code: 'INTERNAL_ERROR',
@@ -82,6 +99,11 @@ app.use((err, _req, res, _next) => {
 });
 
 // ── Start ──────────────────────────────────────────────────────────────────────
+// Kick off a connection eagerly for local/non-serverless dev so the first
+// request doesn't pay the connection cost. On Vercel this line still runs
+// once per cold start, but the per-request middleware above is what
+// actually guarantees the connection is ready — and it reuses this same
+// cached promise instead of opening a second connection.
 connectToDb();
 
 app.listen(PORT, () => {
