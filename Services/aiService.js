@@ -1,3 +1,4 @@
+// Services/aiService.js
 import fetch from 'node-fetch';
 
 class AIService {
@@ -5,11 +6,35 @@ class AIService {
     this.baseURL = process.env.AI_BASE_URL || 'https://tokenin.my.id/v1';
     this.apiKey = process.env.AI_API_KEY;
     this.model = process.env.AI_MODEL || 'myt/gemini-3.5-flash-free';
+    this.timeout = 30000; // 30 seconds timeout
     
     console.log('🤖 AI Service initialized');
     console.log('📡 Base URL:', this.baseURL);
     console.log('📦 Model:', this.model);
     console.log('🔑 API Key exists:', !!this.apiKey);
+  }
+
+  /**
+   * Fetch with timeout
+   */
+  async fetchWithTimeout(url, options, timeout = this.timeout) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    try {
+      const response = await fetch(url, {
+        ...options,
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      return response;
+    } catch (error) {
+      clearTimeout(timeoutId);
+      if (error.name === 'AbortError') {
+        throw new Error('Request timeout: The AI service is taking too long to respond. Please try again or use a faster model.');
+      }
+      throw error;
+    }
   }
 
   /**
@@ -21,30 +46,38 @@ class AIService {
         throw new Error('AI_API_KEY is not configured in environment variables');
       }
 
-      const { temperature = 0.7, max_tokens = 1024, stream = false } = options;
+      const { temperature = 0.7, max_tokens = 512, stream = false } = options;
 
       console.log('📤 Sending request to AI API...');
       console.log('📦 Model:', this.model);
       console.log('📦 Messages count:', messages.length);
 
+      // For Gemini models, use a lower max_tokens to get faster responses
+      const isGemini = this.model.includes('gemini');
+      const adjustedMaxTokens = isGemini ? Math.min(max_tokens, 256) : max_tokens;
+
       const requestBody = {
         model: this.model,
         messages: messages,
-        temperature,
-        max_tokens,
+        temperature: isGemini ? Math.min(temperature, 0.5) : temperature,
+        max_tokens: adjustedMaxTokens,
         stream,
       };
 
       console.log('📦 Request body:', JSON.stringify(requestBody, null, 2));
 
-      const response = await fetch(`${this.baseURL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
+      const response = await this.fetchWithTimeout(
+        `${this.baseURL}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify(requestBody),
         },
-        body: JSON.stringify(requestBody),
-      });
+        20000 // 20 second timeout for Gemini
+      );
 
       console.log('📥 AI API Response Status:', response.status);
 
@@ -58,7 +91,6 @@ class AIService {
         
         console.error('❌ AI API Error Response:', errorData);
         
-        // Handle specific error codes
         if (response.status === 401) {
           throw new Error('Invalid API key. Please check your AI_API_KEY.');
         } else if (response.status === 402) {
@@ -67,6 +99,8 @@ class AIService {
           throw new Error(`Model "${this.model}" not found. Please check available models.`);
         } else if (response.status === 429) {
           throw new Error('Too many requests. Please try again later.');
+        } else if (response.status === 504) {
+          throw new Error('The AI service is currently overloaded. Please try again in a few moments.');
         }
         
         throw new Error(errorData.error?.message || `API Error: ${response.status}`);
@@ -78,6 +112,15 @@ class AIService {
       return data;
     } catch (error) {
       console.error('❌ AI Service Error:', error);
+      
+      // Provide user-friendly error messages
+      if (error.message.includes('timeout')) {
+        throw new Error('The AI model is taking too long to respond. Please try a shorter question or use a different model.');
+      }
+      if (error.message.includes('overloaded')) {
+        throw new Error('The AI service is currently busy. Please try again in a moment.');
+      }
+      
       throw error;
     }
   }
@@ -91,22 +134,30 @@ class AIService {
         throw new Error('AI_API_KEY is not configured in environment variables');
       }
 
-      const { temperature = 0.7, max_tokens = 1024 } = options;
+      const { temperature = 0.7, max_tokens = 512 } = options;
 
-      const response = await fetch(`${this.baseURL}/chat/completions`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${this.apiKey}`,
+      // For Gemini models, use a lower max_tokens to get faster responses
+      const isGemini = this.model.includes('gemini');
+      const adjustedMaxTokens = isGemini ? Math.min(max_tokens, 256) : max_tokens;
+
+      const response = await this.fetchWithTimeout(
+        `${this.baseURL}/chat/completions`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
+          body: JSON.stringify({
+            model: this.model,
+            messages: messages,
+            temperature: isGemini ? Math.min(temperature, 0.5) : temperature,
+            max_tokens: adjustedMaxTokens,
+            stream: true,
+          }),
         },
-        body: JSON.stringify({
-          model: this.model,
-          messages: messages,
-          temperature,
-          max_tokens,
-          stream: true,
-        }),
-      });
+        30000 // 30 second timeout for streaming
+      );
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -147,6 +198,10 @@ class AIService {
       }
     } catch (error) {
       console.error('❌ Streaming Error:', error);
+      
+      if (error.message.includes('timeout')) {
+        throw new Error('The AI response is taking too long. Please try a shorter question.');
+      }
       throw error;
     }
   }
@@ -160,12 +215,16 @@ class AIService {
         throw new Error('AI_API_KEY is not configured in environment variables');
       }
 
-      const response = await fetch(`${this.baseURL}/models`, {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${this.apiKey}`,
+      const response = await this.fetchWithTimeout(
+        `${this.baseURL}/models`,
+        {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${this.apiKey}`,
+          },
         },
-      });
+        10000
+      );
 
       if (!response.ok) {
         throw new Error(`Failed to fetch models: ${response.status}`);
