@@ -23,6 +23,13 @@ const generateUniqueUserId = () =>
 
 // ── POST /api/auth/login ───────────────────────────────────────────────────────
 export const login = async (req, res, next) => {
+  // TEMPORARY TIMING INSTRUMENTATION — remove once the slowness is diagnosed.
+  // Check your Vercel function logs after a login attempt; this prints how
+  // many ms each step took, so we can see exactly where the time goes
+  // (DB query vs bcrypt vs token signing vs something else).
+  const t0 = Date.now();
+  const mark = (label) => console.log(`⏱️  [login] ${label}: ${Date.now() - t0}ms`);
+
   try {
     const { email, password } = req.body;
 
@@ -35,6 +42,7 @@ export const login = async (req, res, next) => {
     }
 
     const user = await User.findOne({ email: email.toLowerCase().trim() });
+    mark('after User.findOne');
 
     if (!user) {
       return res.status(401).json({
@@ -45,6 +53,7 @@ export const login = async (req, res, next) => {
     }
 
     const passwordMatch = await user.comparePassword(password);
+    mark('after bcrypt compare');
     if (!passwordMatch) {
       return res.status(401).json({
         status: 'error',
@@ -73,6 +82,7 @@ export const login = async (req, res, next) => {
 
     // ── Approved — issue JWT ───────────────────────────────────────────────────
     const token = issueToken(user);
+    mark('after issueToken');
 
     // Capture the PREVIOUS login time before overwriting it, so the response
     // can tell the user "you last logged in at X" rather than the moment
@@ -80,28 +90,30 @@ export const login = async (req, res, next) => {
     const previousLogin = user.lastLogin;
     const now = new Date();
 
-    // Fire-and-forget-ish, but we still await it so the response reflects the
-    // saved value reliably. updateOne() skips full document validation/hooks
-    // (no re-hashing of passwordHash), so this adds negligible latency —
-    // unlike calling user.save() here.
-    User.updateOne({ _id: user._id }, { $set: { lastLogin: now } }).catch((err) =>
-      console.error('⚠️ Failed to update lastLogin:', err)
-    );
+    // Genuinely fire-and-forget — do NOT await either of these before
+    // responding. They update analytics/logging data, not anything the
+    // client needs back immediately, so they shouldn't sit in the response's
+    // critical path. Wrapped in an async IIFE + try/catch so this is safe
+    // regardless of whether logActivity is async or throws synchronously,
+    // and won't produce an unhandled-rejection warning.
+    User.updateOne({ _id: user._id }, { $set: { lastLogin: now } })
+      .then(() => mark('lastLogin updateOne finished (background)'))
+      .catch((err) => console.error('⚠️ Failed to update lastLogin:', err));
 
-    // Log activity (fire and forget). Wrapped in try/catch rather than
-    // chaining .catch() directly, since that throws synchronously (and was
-    // the cause of a 500 here) if logActivity isn't guaranteed to return a
-    // real Promise.
-    try {
-      await logActivity({
-        userId: user._id,
-        action: 'login',
-        metadata: { email: user.email, ip: req.ip },
-      });
-    } catch (logErr) {
-      console.error('⚠️ Activity log error:', logErr);
-    }
+    (async () => {
+      try {
+        await logActivity({
+          userId: user._id,
+          action: 'login',
+          metadata: { email: user.email, ip: req.ip },
+        });
+        mark('logActivity finished (background)');
+      } catch (logErr) {
+        console.error('⚠️ Activity log error:', logErr);
+      }
+    })();
 
+    mark('before sending response');
     return res.status(200).json({
       status: 'success',
       token,

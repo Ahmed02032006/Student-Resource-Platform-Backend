@@ -33,8 +33,10 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // itself is cached (see connectToDb.js) so on a warm serverless instance
 // this resolves instantly instead of reconnecting every request.
 app.use(async (_req, res, next) => {
+  const t0 = Date.now();
   try {
     await connectToDb();
+    console.log(`⏱️  [db-connect middleware] resolved in ${Date.now() - t0}ms`);
     next();
   } catch (err) {
     console.error('❌ Database connection failed:', err);
