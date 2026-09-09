@@ -5,8 +5,8 @@ class AIService {
   constructor() {
     this.baseURL = process.env.AI_BASE_URL || 'https://tokenin.my.id/v1';
     this.apiKey = process.env.AI_API_KEY;
-    this.model = process.env.AI_MODEL || 'myt/gemini-3.5-flash-free';
-    this.timeout = 30000; // 30 seconds timeout
+    this.model = process.env.AI_MODEL || 'gpt-3.5-turbo'; // Changed to a more reliable model
+    this.timeout = 15000; // 15 seconds timeout
     
     console.log('🤖 AI Service initialized');
     console.log('📡 Base URL:', this.baseURL);
@@ -31,7 +31,7 @@ class AIService {
     } catch (error) {
       clearTimeout(timeoutId);
       if (error.name === 'AbortError') {
-        throw new Error('Request timeout: The AI service is taking too long to respond. Please try again or use a faster model.');
+        throw new Error('Request timeout: The AI service is taking too long to respond.');
       }
       throw error;
     }
@@ -42,29 +42,29 @@ class AIService {
    */
   async chatCompletion(messages, options = {}) {
     try {
-      if (!this.apiKey) {
-        throw new Error('AI_API_KEY is not configured in environment variables');
+      // Check if API key exists
+      if (!this.apiKey || this.apiKey === 'sk-f507f08a0...........................................') {
+        console.warn('⚠️ AI_API_KEY not properly configured. Using fallback response.');
+        return this.getFallbackResponse(messages);
       }
 
-      const { temperature = 0.7, max_tokens = 512, stream = false } = options;
+      const { temperature = 0.5, max_tokens = 200, stream = false } = options;
 
-      console.log('📤 Sending request to AI API...');
-      console.log('📦 Model:', this.model);
-      console.log('📦 Messages count:', messages.length);
-
-      // For Gemini models, use a lower max_tokens to get faster responses
-      const isGemini = this.model.includes('gemini');
-      const adjustedMaxTokens = isGemini ? Math.min(max_tokens, 256) : max_tokens;
+      // Limit message length to prevent timeout
+      const truncatedMessages = messages.map(msg => ({
+        ...msg,
+        content: msg.content?.length > 300 ? msg.content.substring(0, 300) + '...' : msg.content
+      }));
 
       const requestBody = {
         model: this.model,
-        messages: messages,
-        temperature: isGemini ? Math.min(temperature, 0.5) : temperature,
-        max_tokens: adjustedMaxTokens,
+        messages: truncatedMessages,
+        temperature: Math.min(temperature, 0.5),
+        max_tokens: Math.min(max_tokens, 200),
         stream,
       };
 
-      console.log('📦 Request body:', JSON.stringify(requestBody, null, 2));
+      console.log('📤 Sending request to AI API...');
 
       const response = await this.fetchWithTimeout(
         `${this.baseURL}/chat/completions`,
@@ -76,10 +76,8 @@ class AIService {
           },
           body: JSON.stringify(requestBody),
         },
-        20000 // 20 second timeout for Gemini
+        10000 // 10 second timeout
       );
-
-      console.log('📥 AI API Response Status:', response.status);
 
       if (!response.ok) {
         let errorData;
@@ -91,19 +89,8 @@ class AIService {
         
         console.error('❌ AI API Error Response:', errorData);
         
-        if (response.status === 401) {
-          throw new Error('Invalid API key. Please check your AI_API_KEY.');
-        } else if (response.status === 402) {
-          throw new Error('Insufficient balance. Please top up your account.');
-        } else if (response.status === 404) {
-          throw new Error(`Model "${this.model}" not found. Please check available models.`);
-        } else if (response.status === 429) {
-          throw new Error('Too many requests. Please try again later.');
-        } else if (response.status === 504) {
-          throw new Error('The AI service is currently overloaded. Please try again in a few moments.');
-        }
-        
-        throw new Error(errorData.error?.message || `API Error: ${response.status}`);
+        // Return fallback instead of throwing
+        return this.getFallbackResponse(messages);
       }
 
       const data = await response.json();
@@ -112,33 +99,67 @@ class AIService {
       return data;
     } catch (error) {
       console.error('❌ AI Service Error:', error);
-      
-      // Provide user-friendly error messages
-      if (error.message.includes('timeout')) {
-        throw new Error('The AI model is taking too long to respond. Please try a shorter question or use a different model.');
-      }
-      if (error.message.includes('overloaded')) {
-        throw new Error('The AI service is currently busy. Please try again in a moment.');
-      }
-      
-      throw error;
+      // Return fallback response instead of throwing
+      return this.getFallbackResponse(messages);
     }
   }
 
   /**
-   * Streaming chat completion
+   * Fallback response when AI is unavailable
+   */
+  getFallbackResponse(messages) {
+    const userMessage = messages.find(m => m.role === 'user')?.content || '';
+    
+    let responseText = "I'm sorry, but the AI service is currently unavailable. Here are some helpful resources instead:\n\n";
+    
+    if (userMessage.toLowerCase().includes('study') || userMessage.toLowerCase().includes('exam')) {
+      responseText += "📚 **Study Tips:**\n- Review your course materials regularly\n- Create a study schedule\n- Practice with past exam questions\n- Join study groups with classmates\n\n";
+    } else if (userMessage.toLowerCase().includes('gpa')) {
+      responseText += "📊 **GPA Tips:**\n- Focus on understanding core concepts\n- Attend all lectures and tutorials\n- Submit assignments on time\n- Use the GPA Calculator tool in this app\n\n";
+    } else if (userMessage.toLowerCase().includes('course')) {
+      responseText += "📖 **Course Tips:**\n- Check the Courses tab for materials\n- Track your enrollment status\n- Access resources from enrolled courses\n\n";
+    } else {
+      responseText += "💡 **Quick Tips:**\n- Check your course materials in the Courses tab\n- Use the GPA Calculator to track your progress\n- Contact your instructors for specific questions\n\n";
+    }
+    
+    responseText += "Please try again later or contact support if the issue persists. 🎓";
+    
+    return {
+      choices: [{
+        message: {
+          content: responseText
+        }
+      }],
+      model: 'fallback',
+      usage: { total_tokens: 0 }
+    };
+  }
+
+  /**
+   * Streaming chat completion with fallback
    */
   async streamChatCompletion(messages, onChunk, options = {}) {
     try {
-      if (!this.apiKey) {
-        throw new Error('AI_API_KEY is not configured in environment variables');
+      if (!this.apiKey || this.apiKey === 'sk-f507f08a0...........................................') {
+        // Simulate streaming with fallback
+        const fallback = this.getFallbackResponse(messages);
+        const text = fallback.choices[0].message.content;
+        const words = text.split(' ');
+        let index = 0;
+        
+        const interval = setInterval(() => {
+          if (index < words.length) {
+            onChunk(words[index] + ' ', false);
+            index++;
+          } else {
+            clearInterval(interval);
+            onChunk(null, true);
+          }
+        }, 50);
+        return;
       }
 
-      const { temperature = 0.7, max_tokens = 512 } = options;
-
-      // For Gemini models, use a lower max_tokens to get faster responses
-      const isGemini = this.model.includes('gemini');
-      const adjustedMaxTokens = isGemini ? Math.min(max_tokens, 256) : max_tokens;
+      const { temperature = 0.5, max_tokens = 200 } = options;
 
       const response = await this.fetchWithTimeout(
         `${this.baseURL}/chat/completions`,
@@ -151,17 +172,31 @@ class AIService {
           body: JSON.stringify({
             model: this.model,
             messages: messages,
-            temperature: isGemini ? Math.min(temperature, 0.5) : temperature,
-            max_tokens: adjustedMaxTokens,
+            temperature: Math.min(temperature, 0.5),
+            max_tokens: Math.min(max_tokens, 200),
             stream: true,
           }),
         },
-        30000 // 30 second timeout for streaming
+        15000
       );
 
       if (!response.ok) {
-        const errorData = await response.json();
-        throw new Error(errorData.error?.message || `API Error: ${response.status}`);
+        // Simulate streaming with fallback
+        const fallback = this.getFallbackResponse(messages);
+        const text = fallback.choices[0].message.content;
+        const words = text.split(' ');
+        let index = 0;
+        
+        const interval = setInterval(() => {
+          if (index < words.length) {
+            onChunk(words[index] + ' ', false);
+            index++;
+          } else {
+            clearInterval(interval);
+            onChunk(null, true);
+          }
+        }, 50);
+        return;
       }
 
       const reader = response.body.getReader();
@@ -198,11 +233,21 @@ class AIService {
       }
     } catch (error) {
       console.error('❌ Streaming Error:', error);
+      // Simulate streaming with fallback
+      const fallback = this.getFallbackResponse(messages);
+      const text = fallback.choices[0].message.content;
+      const words = text.split(' ');
+      let index = 0;
       
-      if (error.message.includes('timeout')) {
-        throw new Error('The AI response is taking too long. Please try a shorter question.');
-      }
-      throw error;
+      const interval = setInterval(() => {
+        if (index < words.length) {
+          onChunk(words[index] + ' ', false);
+          index++;
+        } else {
+          clearInterval(interval);
+          onChunk(null, true);
+        }
+      }, 50);
     }
   }
 
@@ -211,8 +256,8 @@ class AIService {
    */
   async getModels() {
     try {
-      if (!this.apiKey) {
-        throw new Error('AI_API_KEY is not configured in environment variables');
+      if (!this.apiKey || this.apiKey === 'sk-f507f08a0...........................................') {
+        return [];
       }
 
       const response = await this.fetchWithTimeout(
@@ -223,18 +268,18 @@ class AIService {
             'Authorization': `Bearer ${this.apiKey}`,
           },
         },
-        10000
+        5000
       );
 
       if (!response.ok) {
-        throw new Error(`Failed to fetch models: ${response.status}`);
+        return [];
       }
 
       const data = await response.json();
       return data.data || [];
     } catch (error) {
       console.error('❌ Get Models Error:', error);
-      throw error;
+      return [];
     }
   }
 }

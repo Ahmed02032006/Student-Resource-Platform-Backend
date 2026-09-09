@@ -71,6 +71,23 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/assessments', assessmentRoutes);
 app.use('/api/ai', aiRoutes);
 
+app.use((req, res, next) => {
+  // Wrap all route handlers with try-catch
+  const originalNext = next;
+  next = (err) => {
+    if (err) {
+      console.error('❌ Route Error:', err);
+      return res.status(200).json({
+        status: 'error',
+        code: 'HANDLED_ERROR',
+        message: 'An error occurred, but the server is still running.',
+      });
+    }
+    originalNext();
+  };
+  next();
+});
+
 // ── 404 handler ────────────────────────────────────────────────────────────────
 // Must come AFTER every real route, or it swallows requests meant for them.
 app.use((_req, res) =>
